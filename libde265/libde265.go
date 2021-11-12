@@ -1,8 +1,6 @@
 package libde265
 
-//#cgo 386 amd64 CXXFLAGS: -Ilibde265 -I. -std=c++11 -DHAVE_SSE4_1 -msse4.1
-//#cgo arm arm64 CXXFLAGS: -Ilibde265 -I. -std=c++11 -DHAVE_ARM
-//#cgo CFLAGS: -I.
+// #cgo pkg-config: libde265
 // #include <stdint.h>
 // #include <stdlib.h>
 // #include "libde265/de265.h"
