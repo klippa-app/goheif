@@ -204,7 +204,7 @@ func (dec *Decoder) Reset() error {
 	return nil
 }
 
-func (dec *Decoder) Push(data []byte) error {
+func (dec *Decoder) Push(data *[]byte) error {
 	if libde265plugin == nil {
 		return NotInitializedError
 	}
@@ -221,7 +221,7 @@ func (dec *Decoder) Push(data []byte) error {
 	return nil
 }
 
-func (dec *Decoder) DecodeImage(data []byte) (*image.YCbCr, error) {
+func (dec *Decoder) DecodeImage(data *[]byte) (*image.YCbCr, error) {
 	if libde265plugin == nil {
 		return nil, NotInitializedError
 	}
@@ -236,4 +236,34 @@ func (dec *Decoder) DecodeImage(data []byte) (*image.YCbCr, error) {
 		return nil, err
 	}
 	return resp.Image, nil
+}
+
+type RenderFileOutputFormat string // The file format to render output as.
+
+const (
+	RenderFileOutputFormatJPG RenderFileOutputFormat = "jpg" // Render the file as a JPEG file.
+	RenderFileOutputFormatPNG RenderFileOutputFormat = "png" // Render the file as a PNG file.
+)
+
+type RenderOptions struct {
+	OutputFormat RenderFileOutputFormat // The format to output the image as
+	MaxFileSize  int64                  // The maximum filesize, if jpg is chosen as output format, it will try to compress it until it fits
+	SafeEncoding bool                   // Whether to use safe encoding.
+}
+
+func RenderFile(data *[]byte, options RenderOptions) (*[]byte, error) {
+	if libde265plugin == nil {
+		return nil, NotInitializedError
+	}
+
+	err := checkPlugin()
+	if err != nil {
+		return nil, errors.New("could not check or start plugin")
+	}
+
+	resp, err := libde265plugin.RenderFile(&requests.RenderFile{Data: data, OutputFormat: requests.RenderFileOutputFormat(options.OutputFormat), MaxFileSize: options.MaxFileSize, SafeEncoding: options.SafeEncoding})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Output, nil
 }

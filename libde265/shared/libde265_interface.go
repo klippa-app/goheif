@@ -17,6 +17,7 @@ type Libde265 interface {
 	PushDecoder(*requests.PushDecoder) (*responses.PushDecoder, error)
 	ResetDecoder(*requests.ResetDecoder) (*responses.ResetDecoder, error)
 	RenderDecoder(*requests.RenderDecoder) (*responses.RenderDecoder, error)
+	RenderFile(*requests.RenderFile) (*responses.RenderFile, error)
 }
 
 type Libde265RPC struct{ client *rpc.Client }
@@ -74,6 +75,16 @@ func (g *Libde265RPC) ResetDecoder(request *requests.ResetDecoder) (*responses.R
 func (g *Libde265RPC) RenderDecoder(request *requests.RenderDecoder) (*responses.RenderDecoder, error) {
 	resp := &responses.RenderDecoder{}
 	err := g.client.Call("Plugin.RenderDecoder", request, resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+func (g *Libde265RPC) RenderFile(request *requests.RenderFile) (*responses.RenderFile, error) {
+	resp := &responses.RenderFile{}
+	err := g.client.Call("Plugin.RenderFile", request, resp)
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +185,24 @@ func (s *Libde265RPCServer) RenderDecoder(request *requests.RenderDecoder, resp 
 	}()
 
 	implResp, err := s.Impl.RenderDecoder(request)
+	if err != nil {
+		return err
+	}
+
+	// Overwrite the target address of resp to the target address of implResp.
+	*resp = *implResp
+
+	return nil
+}
+
+func (s *Libde265RPCServer) RenderFile(request *requests.RenderFile, resp *responses.RenderFile) (err error) {
+	defer func() {
+		if panicError := recover(); panicError != nil {
+			err = fmt.Errorf("panic occurred in %s: %v", "RenderFile", panicError)
+		}
+	}()
+
+	implResp, err := s.Impl.RenderFile(request)
 	if err != nil {
 		return err
 	}

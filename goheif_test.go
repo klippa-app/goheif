@@ -3,8 +3,11 @@ package goheif
 import (
 	"bytes"
 	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"io/ioutil"
+	"os"
 	"testing"
 
 	"github.com/klippa-app/goheif/libde265"
@@ -29,7 +32,7 @@ func TestFormatRegistered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	b, err := ioutil.ReadFile("testdata/camel.heic")
+	b, err := os.ReadFile("testdata/camel.heic")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +43,70 @@ func TestFormatRegistered(t *testing.T) {
 	}
 
 	if got, want := dec, "heic"; got != want {
+		t.Errorf("unexpected decoder: got %s, want %s", got, want)
+	}
+
+	if w, h := img.Bounds().Dx(), img.Bounds().Dy(); w != 1596 || h != 1064 {
+		t.Errorf("unexpected decoded image size: got %dx%d, want 1596x1064", w, h)
+	}
+}
+
+func TestRenderJPEG(t *testing.T) {
+	err := initLib()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := os.ReadFile("testdata/camel.heic")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	renderedFile, err := libde265.RenderFile(&b, libde265.RenderOptions{
+		OutputFormat: libde265.RenderFileOutputFormatJPG,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	img, dec, err := image.Decode(bytes.NewReader(*renderedFile))
+	if err != nil {
+		t.Fatalf("unable to decode jpeg image: %s", err)
+	}
+
+	if got, want := dec, "jpeg"; got != want {
+		t.Errorf("unexpected decoder: got %s, want %s", got, want)
+	}
+
+	if w, h := img.Bounds().Dx(), img.Bounds().Dy(); w != 1596 || h != 1064 {
+		t.Errorf("unexpected decoded image size: got %dx%d, want 1596x1064", w, h)
+	}
+}
+
+func TestRenderPNG(t *testing.T) {
+	err := initLib()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := os.ReadFile("testdata/camel.heic")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	renderedFile, err := libde265.RenderFile(&b, libde265.RenderOptions{
+		OutputFormat: libde265.RenderFileOutputFormatPNG,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	img, dec, err := image.Decode(bytes.NewReader(*renderedFile))
+	if err != nil {
+		t.Fatalf("unable to decode jpeg image: %s", err)
+	}
+
+	if got, want := dec, "png"; got != want {
 		t.Errorf("unexpected decoder: got %s, want %s", got, want)
 	}
 

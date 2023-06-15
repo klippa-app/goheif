@@ -15,7 +15,7 @@ import (
 
 // SafeEncoding uses more memory but seems to make
 // the library safer to use in containers.
-var SafeEncoding bool
+var SafeEncoding = true
 
 type gridBox struct {
 	columns, rows int
@@ -64,8 +64,8 @@ func decodeHevcItem(dec *libde265.Decoder, hf *heif.File, item *heif.Item) (*ima
 	}
 
 	dec.Reset()
-	dec.Push(hdr)
-	ycc, err := dec.DecodeImage(data)
+	dec.Push(&hdr)
+	ycc, err := dec.DecodeImage(&data)
 	if err != nil {
 		return nil, err
 	}
