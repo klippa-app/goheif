@@ -8,7 +8,8 @@ import (
 	"log"
 	"os"
 
-	"github.com/jdeng/goheif"
+	"github.com/klippa-app/goheif"
+	"github.com/klippa-app/goheif/libde265"
 )
 
 // Skip Writer for exif writing
@@ -57,6 +58,18 @@ func newWriterExif(w io.Writer, exif []byte) (io.Writer, error) {
 	}
 
 	return writer, nil
+}
+
+func init() {
+	err := goheif.Init(goheif.Config{Lib265Config: libde265.Config{
+		Command: libde265.Command{
+			BinPath: "go",
+			Args:    []string{"run", "libde265/worker_example/main.go"},
+		},
+	}})
+	if err != nil {
+		log.Fatalf("could not start libde265 worker: %s", err.Error())
+	}
 }
 
 func main() {

@@ -4,10 +4,39 @@ Intel and ARM supported
 
 ## Install
 
-```go get github.com/jdeng/goheif```
+```go get github.com/klippa-app/goheif```
 
 - Code Sample
+
+First make a worker package/binary in the libde265_plugin directory.
+
 ```
+package main
+
+import "github.com/klippa-app/goheif/libde265/plugin"
+
+func main() {
+	plugin.StartPlugin()
+}
+```
+
+Then use the worker file/binary in your program.
+If you want to make it run through go, use the example below.
+
+You can also go build `libde265_plugin/main.go` and then reference it in BinPath, this is the advices run method for deployments.
+
+```
+package main
+
+func init() {
+    err := goheif.Init(Config{Lib265Config: libde265.Config{
+		Command: libde265.Command{
+			BinPath: "go",
+			Args:    []string{"run", "libde265_plugin/main.go"},
+		},
+	}})
+}
+
 func main() {
 	flag.Parse()
 	...
@@ -51,7 +80,9 @@ func main() {
   - Some minor bugfixes
   - A few new box parsers, noteably 'iref' and 'hvcC'
 
-- Include libde265's source code (SSE by default enabled) and a simple golang binding
+- Includes libde265 using pkg-config and a simple golang binding
+
+- Processes the images in a subprocess to prevent crashing the main application on segfaults
 
 - A Utility `heic2jpg` to illustrate the usage.
 
@@ -66,7 +97,5 @@ func main() {
 - libde265 (https://github.com/strukturag/libde265)
 - implementation learnt from libheif (https://github.com/strukturag/libheif)
 
-## TODO
-- Upstream the changes to heif?
 
 

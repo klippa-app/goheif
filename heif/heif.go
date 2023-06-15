@@ -27,7 +27,7 @@ import (
 	"io"
 	"log"
 
-	"github.com/jdeng/goheif/heif/bmff"
+	"github.com/klippa-app/goheif/heif/bmff"
 )
 
 // File represents a HEIF file.
