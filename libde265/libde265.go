@@ -79,6 +79,7 @@ func startPlugin() error {
 		Plugins:         pluginMap,
 		Cmd:             exec.Command(currentConfig.Command.BinPath, currentConfig.Command.Args...),
 		Logger:          logger,
+		StartTimeout:    currentConfig.Command.StartTimeout,
 	})
 
 	rpcClient, err := client.Client()
