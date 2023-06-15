@@ -2,14 +2,15 @@ package goheif
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"io"
-	"io/ioutil"
+	"sync"
 
-	"github.com/jdeng/goheif/heif"
-	"github.com/jdeng/goheif/libde265"
+	"github.com/klippa-app/goheif/heif"
+	"github.com/klippa-app/goheif/libde265"
 )
 
 // SafeEncoding uses more memory but seems to make
@@ -64,14 +65,9 @@ func decodeHevcItem(dec *libde265.Decoder, hf *heif.File, item *heif.Item) (*ima
 
 	dec.Reset()
 	dec.Push(hdr)
-	tile, err := dec.DecodeImage(data)
+	ycc, err := dec.DecodeImage(data)
 	if err != nil {
 		return nil, err
-	}
-
-	ycc, ok := tile.(*image.YCbCr)
-	if !ok {
-		return nil, fmt.Errorf("Tile is not YCbCr")
 	}
 
 	return ycc, nil
@@ -83,6 +79,10 @@ func ExtractExif(ra io.ReaderAt) ([]byte, error) {
 }
 
 func Decode(r io.Reader) (image.Image, error) {
+	if !isInitialized {
+		return nil, NotInitializedError
+	}
+
 	ra, err := asReaderAt(r)
 	if err != nil {
 		return nil, err
@@ -188,6 +188,10 @@ func Decode(r io.Reader) (image.Image, error) {
 func DecodeConfig(r io.Reader) (image.Config, error) {
 	var config image.Config
 
+	if !isInitialized {
+		return config, NotInitializedError
+	}
+
 	ra, err := asReaderAt(r)
 	if err != nil {
 		return config, err
@@ -218,7 +222,7 @@ func asReaderAt(r io.Reader) (io.ReaderAt, error) {
 		return ra, nil
 	}
 
-	b, err := ioutil.ReadAll(r)
+	b, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}
@@ -226,8 +230,42 @@ func asReaderAt(r io.Reader) (io.ReaderAt, error) {
 	return bytes.NewReader(b), nil
 }
 
+var NotInitializedError = errors.New("goheif was not initialized, you must call the Init() method")
+var isInitialized = false
+var initLock = sync.Mutex{}
+
+type Config struct {
+	Lib265Config libde265.Config
+}
+
+func Init(config Config) error {
+	initLock.Lock()
+	defer initLock.Unlock()
+	if isInitialized {
+		return nil
+	}
+	err := libde265.Init(config.Lib265Config)
+	if err != nil {
+		return err
+	}
+	isInitialized = true
+
+	return nil
+}
+
+func DeInit() {
+	initLock.Lock()
+	defer initLock.Unlock()
+
+	if !isInitialized {
+		return
+	}
+
+	libde265.DeInit()
+	isInitialized = true
+}
+
 func init() {
-	libde265.Init()
 	// they check for "ftyp" at the 5th bytes, let's do the same...
 	// https://github.com/strukturag/libheif/blob/master/libheif/heif.cc#L94
 	image.RegisterFormat("heic", "????ftyp", Decode, DecodeConfig)

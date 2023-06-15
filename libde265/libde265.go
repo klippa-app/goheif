@@ -1,44 +1,137 @@
 package libde265
 
-// #cgo pkg-config: libde265
-// #include <stdint.h>
-// #include <stdlib.h>
-// #include "libde265/de265.h"
-import "C"
-
 import (
-	"fmt"
+	"errors"
 	"image"
-	"unsafe"
+	"log"
+	"os"
+	"os/exec"
+	"time"
+
+	"github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-plugin"
+
+	"github.com/klippa-app/goheif/libde265/requests"
+	"github.com/klippa-app/goheif/libde265/shared"
 )
 
 type Decoder struct {
-	ctx        unsafe.Pointer
-	hasImage   bool
+	id         string
 	safeEncode bool
 }
 
-func Init() {
-	C.de265_init()
+var client *plugin.Client
+var gRPCClient plugin.ClientProtocol
+var libde265plugin shared.Libde265
+var currentConfig Config
+
+type Config struct {
+	Command Command
 }
 
-func Fini() {
-	C.de265_free()
+type Command struct {
+	BinPath string
+	Args    []string
+
+	// StartTimeout is the timeout to wait for the plugin to say it
+	// has started successfully.
+	StartTimeout time.Duration
 }
 
-func NewDecoder(opts ...Option) (*Decoder, error) {
-	p := C.de265_new_decoder()
-	if p == nil {
-		return nil, fmt.Errorf("Unable to create decoder")
+func Init(config Config) error {
+	if client != nil {
+		return nil
 	}
 
-	dec := &Decoder{ctx: p, hasImage: false}
-	for _, opt := range opts {
-		opt(dec)
+	currentConfig = config
+
+	return startPlugin()
+}
+
+func DeInit() {
+	gRPCClient.Close()
+	gRPCClient = nil
+	client.Kill()
+	client = nil
+	libde265plugin = nil
+}
+
+func startPlugin() error {
+	var handshakeConfig = plugin.HandshakeConfig{
+		ProtocolVersion:  1,
+		MagicCookieKey:   "BASIC_PLUGIN",
+		MagicCookieValue: "libde265",
 	}
 
-	return dec, nil
+	// pluginMap is the map of plugins we can dispense.
+	var pluginMap = map[string]plugin.Plugin{
+		"libde265": &shared.Libde265Plugin{},
+	}
+
+	logger := hclog.New(&hclog.LoggerOptions{
+		Name:   "plugin",
+		Output: os.Stdout,
+		Level:  hclog.Debug,
+	})
+
+	client := plugin.NewClient(&plugin.ClientConfig{
+		HandshakeConfig: handshakeConfig,
+		Plugins:         pluginMap,
+		Cmd:             exec.Command(currentConfig.Command.BinPath, currentConfig.Command.Args...),
+		Logger:          logger,
+	})
+
+	rpcClient, err := client.Client()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	gRPCClient = rpcClient
+
+	raw, err := rpcClient.Dispense("libde265")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	pluginInstance := raw.(shared.Libde265)
+	pong, err := pluginInstance.Ping()
+	if err != nil {
+		return err
+	}
+
+	if pong != "Pong" {
+		return errors.New("Wrong ping/pong result")
+	}
+
+	libde265plugin = pluginInstance
+
+	return nil
 }
+
+func checkPlugin() error {
+	pong, err := libde265plugin.Ping()
+	if err != nil {
+		log.Printf("restarting libde265 plugin due to wrong pong result: %s", err.Error())
+		err = startPlugin()
+		if err != nil {
+			log.Printf("could not restart libde265 plugin: %s", err.Error())
+			return err
+		}
+	}
+
+	if pong != "Pong" {
+		log.Printf("restarting libde265 plugin due to wrong pong result: %s", pong)
+		err = startPlugin()
+		if err != nil {
+			log.Printf("could not restart libde265 plugin: %s", err.Error())
+			return err
+		}
+	}
+
+	return nil
+}
+
+var NotInitializedError = errors.New("libde265 was not initialized, you must call the Init() method")
 
 type Option func(*Decoder)
 
@@ -48,119 +141,98 @@ func WithSafeEncoding(b bool) Option {
 	}
 }
 
-func (dec *Decoder) Free() {
-	dec.Reset()
-	C.de265_free_decoder(dec.ctx)
-}
-
-func (dec *Decoder) Reset() {
-	if dec.ctx != nil && dec.hasImage {
-		C.de265_release_next_picture(dec.ctx)
-		dec.hasImage = false
+func NewDecoder(opts ...Option) (*Decoder, error) {
+	if libde265plugin == nil {
+		return nil, NotInitializedError
 	}
 
-	C.de265_reset(dec.ctx)
+	err := checkPlugin()
+	if err != nil {
+		return nil, errors.New("could not check or start plugin")
+	}
+
+	dec := &Decoder{}
+	for _, opt := range opts {
+		opt(dec)
+	}
+
+	newDecoder, err := libde265plugin.NewDecoder(&requests.NewDecoder{
+		SafeEncode: dec.safeEncode,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	dec.id = newDecoder.ID
+	return dec, nil
 }
 
-func (dec *Decoder) Push(data []byte) error {
-	var pos int
-	totalSize := len(data)
-	for pos < totalSize {
-		if pos+4 > totalSize {
-			return fmt.Errorf("Invalid NAL data")
-		}
+func (dec *Decoder) Free() error {
+	if libde265plugin == nil {
+		return NotInitializedError
+	}
 
-		nalSize := uint32(data[pos])<<24 | uint32(data[pos+1])<<16 | uint32(data[pos+2])<<8 | uint32(data[pos+3])
-		pos += 4
+	err := checkPlugin()
+	if err != nil {
+		return errors.New("could not check or start plugin")
+	}
 
-		if pos+int(nalSize) > totalSize {
-			return fmt.Errorf("Invalid NAL size: %d", nalSize)
-		}
-
-		C.de265_push_NAL(dec.ctx, unsafe.Pointer(&data[pos]), C.int(nalSize), C.de265_PTS(0), nil)
-		pos += int(nalSize)
+	_, err = libde265plugin.CloseDecoder(&requests.CloseDecoder{ID: dec.id})
+	if err != nil {
+		return err
 	}
 
 	return nil
 }
 
-func (dec *Decoder) DecodeImage(data []byte) (image.Image, error) {
-	if dec.hasImage {
-		fmt.Printf("previous image may leak")
+func (dec *Decoder) Reset() error {
+	if libde265plugin == nil {
+		return NotInitializedError
 	}
 
-	if len(data) > 0 {
-		if err := dec.Push(data); err != nil {
-			return nil, err
-		}
+	err := checkPlugin()
+	if err != nil {
+		return errors.New("could not check or start plugin")
 	}
 
-	if ret := C.de265_flush_data(dec.ctx); ret != C.DE265_OK {
-		return nil, fmt.Errorf("flush_data error")
+	_, err = libde265plugin.ResetDecoder(&requests.ResetDecoder{ID: dec.id})
+	if err != nil {
+		return err
 	}
 
-	var more C.int = 1
-	for more != 0 {
-		if decerr := C.de265_decode(dec.ctx, &more); decerr != C.DE265_OK {
-			return nil, fmt.Errorf("decode error")
-		}
+	return nil
+}
 
-		for {
-			warning := C.de265_get_warning(dec.ctx)
-			if warning == C.DE265_OK {
-				break
-			}
-			fmt.Printf("warning: %v\n", C.GoString(C.de265_get_error_text(warning)))
-		}
-
-		if img := C.de265_get_next_picture(dec.ctx); img != nil {
-			dec.hasImage = true // lazy release
-
-			width := C.de265_get_image_width(img, 0)
-			height := C.de265_get_image_height(img, 0)
-
-			var ystride, cstride C.int
-			y := C.de265_get_image_plane(img, 0, &ystride)
-			cb := C.de265_get_image_plane(img, 1, &cstride)
-			cheight := C.de265_get_image_height(img, 1)
-			cr := C.de265_get_image_plane(img, 2, &cstride)
-			//			crh := C.de265_get_image_height(img, 2)
-
-			// sanity check
-			if int(height)*int(ystride) >= int(1<<30) {
-				return nil, fmt.Errorf("image too big")
-			}
-
-			var r image.YCbCrSubsampleRatio
-			switch chroma := C.de265_get_chroma_format(img); chroma {
-			case C.de265_chroma_420:
-				r = image.YCbCrSubsampleRatio420
-			case C.de265_chroma_422:
-				r = image.YCbCrSubsampleRatio422
-			case C.de265_chroma_444:
-				r = image.YCbCrSubsampleRatio444
-			}
-			ycc := &image.YCbCr{
-				YStride:        int(ystride),
-				CStride:        int(cstride),
-				SubsampleRatio: r,
-				Rect:           image.Rectangle{Min: image.Point{0, 0}, Max: image.Point{int(width), int(height)}},
-			}
-			if dec.safeEncode {
-				ycc.Y = C.GoBytes(unsafe.Pointer(y), C.int(height*ystride))
-				ycc.Cb = C.GoBytes(unsafe.Pointer(cb), C.int(cheight*cstride))
-				ycc.Cr = C.GoBytes(unsafe.Pointer(cr), C.int(cheight*cstride))
-			} else {
-				ycc.Y = (*[1 << 30]byte)(unsafe.Pointer(y))[:int(height)*int(ystride)]
-				ycc.Cb = (*[1 << 30]byte)(unsafe.Pointer(cb))[:int(cheight)*int(cstride)]
-				ycc.Cr = (*[1 << 30]byte)(unsafe.Pointer(cr))[:int(cheight)*int(cstride)]
-			}
-
-			//C.de265_release_next_picture(dec.ctx)
-
-			return ycc, nil
-		}
+func (dec *Decoder) Push(data []byte) error {
+	if libde265plugin == nil {
+		return NotInitializedError
 	}
 
-	return nil, fmt.Errorf("No picture")
+	err := checkPlugin()
+	if err != nil {
+		return errors.New("could not check or start plugin")
+	}
+
+	_, err = libde265plugin.PushDecoder(&requests.PushDecoder{ID: dec.id, Data: data})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (dec *Decoder) DecodeImage(data []byte) (*image.YCbCr, error) {
+	if libde265plugin == nil {
+		return nil, NotInitializedError
+	}
+
+	err := checkPlugin()
+	if err != nil {
+		return nil, errors.New("could not check or start plugin")
+	}
+
+	resp, err := libde265plugin.RenderDecoder(&requests.RenderDecoder{ID: dec.id, Data: data})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Image, nil
 }

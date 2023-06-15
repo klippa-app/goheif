@@ -6,9 +6,29 @@ import (
 	"io"
 	"io/ioutil"
 	"testing"
+
+	"github.com/klippa-app/goheif/libde265"
 )
 
+func initLib() error {
+	err := Init(Config{Lib265Config: libde265.Config{
+		Command: libde265.Command{
+			BinPath: "go",
+			Args:    []string{"run", "libde265/worker_example/main.go"},
+		},
+	}})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func TestFormatRegistered(t *testing.T) {
+	err := initLib()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	b, err := ioutil.ReadFile("testdata/camel.heic")
 	if err != nil {
 		t.Fatal(err)
@@ -29,10 +49,18 @@ func TestFormatRegistered(t *testing.T) {
 }
 
 func BenchmarkSafeEncoding(b *testing.B) {
+	err := initLib()
+	if err != nil {
+		b.Fatal(err)
+	}
 	benchEncoding(b, true)
 }
 
 func BenchmarkRegularEncoding(b *testing.B) {
+	err := initLib()
+	if err != nil {
+		b.Fatal(err)
+	}
 	benchEncoding(b, false)
 }
 
@@ -54,7 +82,11 @@ func benchEncoding(b *testing.B, safe bool) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		Decode(r)
+		_, err = Decode(r)
+		if err != nil {
+			b.Fatal(err)
+		}
+
 		r.Seek(0, io.SeekStart)
 	}
 }
